@@ -1,10 +1,10 @@
-name: Test Telegram
+name: Crypto Market Scanner
 
 on:
   workflow_dispatch:
 
 jobs:
-  test:
+  scan:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
@@ -17,6 +17,12 @@ jobs:
 
       - name: Install requests
         run: pip install requests
+
+      - name: Run scanner
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scanner.py
 
       - name: Send test Telegram message
         env:
