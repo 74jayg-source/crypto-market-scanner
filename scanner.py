@@ -4,7 +4,8 @@ import math
 import requests
 from typing import List, Dict, Any, Tuple
 
-BINANCE_BASE = "https://api.binance.com"
+BINANCE_BASE = "https://data-api.binance.vision"
+
 
 
 def tg_send(text: str) -> None:
