@@ -144,7 +144,8 @@ if not (
     and not any(x in symbol for x in ["BTC", "ETH", "USDC", "BUSD"])
 ):
     continue
-score, details = score_candidate(tcandidates.append((t["symbol"], score, details))
+score, details = score_candidate(t)
+candidates.append((t["symbol"], score, details))
 
     # Sort by score and take top 5
     candidates.sort(key=lambda x: x[1], reverse=True)
