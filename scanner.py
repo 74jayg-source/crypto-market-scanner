@@ -174,7 +174,7 @@ def main():
         })
 
     candidates.sort(key=lambda x: x["score"], reverse=True)
-    best = candidates[:5]
+    best = candidates[:1]
 
     if not best:
         tg_send("⚡ Pre-breakout Watch (v3)\nNo clean 15m acceleration setups right now.")
