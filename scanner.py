@@ -34,31 +34,30 @@ def fetch_15m_klines(symbol):
     return get_json("/api/v3/klines", {
         "symbol": symbol,
         "interval": "15m",
-        "limit": 32
+        "limit": 40
     })
 
 
-# 🔥 NEW: Compression detection
 def is_compressing(closes):
-    recent = closes[-8:]     # last 2 hours
-    earlier = closes[-24:-8] # prior 4 hours
+    recent = closes[-8:]       # last 2 hours
+    earlier = closes[-24:-8]   # prior 4 hours
 
-    if len(earlier) < 8:
-        return False
+    if len(recent) < 8 or len(earlier) < 8:
+        return False, 1.0
 
     recent_range = max(recent) - min(recent)
     earlier_range = max(earlier) - min(earlier)
 
-    if earlier_range == 0:
-        return False
+    if earlier_range <= 0:
+        return False, 1.0
 
-    compression_ratio = recent_range / earlier_range
+    ratio = recent_range / earlier_range
 
-    # smaller range = compression
-    return compression_ratio < 0.6
+    # Under 0.8 = some compression
+    return ratio < 0.8, ratio
 
 
-def has_15m_acceleration(symbol):
+def analyse_15m(symbol):
     try:
         candles = fetch_15m_klines(symbol)
     except Exception:
@@ -85,45 +84,71 @@ def has_15m_acceleration(symbol):
 
     vol_ratio = recent_vol / prior_vol
 
-    # 🔥 NEW: compression check
-    compressing = is_compressing(closes)
+    compressing, compression_ratio = is_compressing(closes)
 
+    # v6 = compression + early acceleration
     if not compressing:
-        return False, "no compression", None
+        return False, f"not compressed {compression_ratio:.2f}", None
 
-    if move_1h < 0.3:
+    if move_1h < 0.25:
         return False, f"1h weak {move_1h:.1f}%", None
 
-    if move_1h > 5.0:
+    if move_1h > 5.5:
         return False, f"1h too hot {move_1h:.1f}%", None
 
-    if move_3h > 10.0:
+    if move_3h > 11:
         return False, f"3h too extended {move_3h:.1f}%", None
 
-    if vol_ratio < 1.4:
-        return False, f"volume not rising {vol_ratio:.1f}x", None
-
-    reason = f"Compression + breakout: 1h {move_1h:+.1f}%, vol {vol_ratio:.1f}x"
+    if vol_ratio < 1.25:
+        return False, f"volume weak {vol_ratio:.1f}x", None
 
     data = {
         "last_close": last_close,
-        "vol_ratio": vol_ratio
+        "move_1h": move_1h,
+        "move_3h": move_3h,
+        "vol_ratio": vol_ratio,
+        "compression_ratio": compression_ratio
     }
+
+    reason = (
+        f"compression {compression_ratio:.2f} + "
+        f"15m accel: 1h {move_1h:+.1f}%, "
+        f"3h {move_3h:+.1f}%, vol {vol_ratio:.1f}x"
+    )
 
     return True, reason, data
 
 
-def score_candidate(t, accel_data):
+def score_candidate(t, data):
     pct = safe_float(t.get("priceChangePercent"))
     trades = safe_float(t.get("count"))
     qvol = safe_float(t.get("quoteVolume"))
 
     volume_score = math.log10(qvol + 1)
     trade_score = math.log10(trades + 1)
-    early_score = max(0, 6 - pct)
-    accel_score = accel_data["vol_ratio"] * 2
 
-    return volume_score + trade_score + early_score + accel_score
+    # Prefer 24h move between +2% and +5%
+    if 2 <= pct <= 5:
+        pct_score = 5
+    elif 1 <= pct < 2:
+        pct_score = 3
+    elif 5 < pct <= 7:
+        pct_score = 2
+    else:
+        pct_score = 0
+
+    compression_score = max(0, (0.8 - data["compression_ratio"]) * 10)
+    accel_score = data["vol_ratio"] * 2
+    momentum_score = data["move_1h"] * 1.5
+
+    return (
+        volume_score
+        + trade_score
+        + pct_score
+        + compression_score
+        + accel_score
+        + momentum_score
+    )
 
 
 def price_plan(price):
@@ -148,33 +173,33 @@ def fmt_price(x):
         return f"{x:.8f}"
 
 
-def format_watchlist(candidates):
-    item = candidates[0]
-    t = item["ticker"]
+def format_alert(candidate):
+    t = candidate["ticker"]
 
     symbol = t["symbol"].replace("USDT", "/USDT")
     pct = safe_float(t.get("priceChangePercent"))
     qvol = safe_float(t.get("quoteVolume")) / 1_000_000
     trades = int(safe_float(t.get("count")))
-    reason = item["reason"]
-
     price = safe_float(t.get("lastPrice"))
+
     entry_low, entry_high, stop, t1, t2, t3 = price_plan(price)
 
     return (
-        "🚀 BEST Pre-breakout Setup (v5)\n\n"
+        "🔥 BEST Daily Riser Candidate (v6)\n\n"
         f"{symbol}\n"
         f"Current: {fmt_price(price)}\n"
         f"24h: {pct:+.1f}%\n"
         f"Volume: ${qvol:.1f}M\n"
         f"Trades: {trades:,}\n\n"
-        f"{reason}\n\n"
+        f"Reason: {candidate['reason']}\n\n"
         "PLAN\n"
-        f"Entry: {fmt_price(entry_low)} – {fmt_price(entry_high)}\n"
-        f"Stop: below {fmt_price(stop)}\n\n"
-        f"T1: {fmt_price(t1)} (+10%)\n"
-        f"T2: {fmt_price(t2)} (+20%)\n"
-        f"T3: {fmt_price(t3)} (+30%)\n"
+        f"Entry zone: {fmt_price(entry_low)} – {fmt_price(entry_high)}\n"
+        f"Stop / invalidation: below {fmt_price(stop)}\n\n"
+        f"Target 1: {fmt_price(t1)} (+10%)\n"
+        f"Target 2: {fmt_price(t2)} (+20%)\n"
+        f"Stretch: {fmt_price(t3)} (+30%)\n\n"
+        "Management idea: take some at T1, protect the rest.\n"
+        "Watchlist only. Not financial advice."
     )
 
 
@@ -203,7 +228,8 @@ def main():
         if any(x in symbol for x in ["UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT"]):
             continue
 
-        if pct < 1 or pct > 6:
+        # Slightly wider than v5 so we don't over-filter
+        if pct < 1 or pct > 7:
             continue
 
         if qvol < 10_000_000:
@@ -215,18 +241,18 @@ def main():
         first_pass.append(t)
 
     first_pass.sort(key=lambda x: safe_float(x.get("quoteVolume")), reverse=True)
-    first_pass = first_pass[:40]
+    first_pass = first_pass[:50]
 
     candidates = []
 
     for t in first_pass:
         symbol = t["symbol"]
-        ok, reason, accel_data = has_15m_acceleration(symbol)
+        ok, reason, data = analyse_15m(symbol)
 
         if not ok:
             continue
 
-        score = score_candidate(t, accel_data)
+        score = score_candidate(t, data)
 
         candidates.append({
             "ticker": t,
@@ -235,13 +261,13 @@ def main():
         })
 
     candidates.sort(key=lambda x: x["score"], reverse=True)
-    best = candidates[:1]
 
-    if not best:
-        tg_send("🚀 Pre-breakout Watch (v5)\nNo compression + breakout setups right now.")
+    if not candidates:
+        tg_send("🔥 Daily Riser Scanner (v6)\nNo high-quality compression + acceleration setup right now.")
         return
 
-    tg_send(format_watchlist(best))
+    best = candidates[0]
+    tg_send(format_alert(best))
 
 
 if __name__ == "__main__":
