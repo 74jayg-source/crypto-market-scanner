@@ -34,8 +34,28 @@ def fetch_15m_klines(symbol):
     return get_json("/api/v3/klines", {
         "symbol": symbol,
         "interval": "15m",
-        "limit": 24
+        "limit": 32
     })
+
+
+# 🔥 NEW: Compression detection
+def is_compressing(closes):
+    recent = closes[-8:]     # last 2 hours
+    earlier = closes[-24:-8] # prior 4 hours
+
+    if len(earlier) < 8:
+        return False
+
+    recent_range = max(recent) - min(recent)
+    earlier_range = max(earlier) - min(earlier)
+
+    if earlier_range == 0:
+        return False
+
+    compression_ratio = recent_range / earlier_range
+
+    # smaller range = compression
+    return compression_ratio < 0.6
 
 
 def has_15m_acceleration(symbol):
@@ -44,7 +64,7 @@ def has_15m_acceleration(symbol):
     except Exception:
         return False, "15m data failed", None
 
-    if len(candles) < 13:
+    if len(candles) < 24:
         return False, "not enough candles", None
 
     closes = [safe_float(c[4]) for c in candles]
@@ -58,12 +78,18 @@ def has_15m_acceleration(symbol):
     move_3h = ((last_close - close_3h_ago) / close_3h_ago) * 100
 
     recent_vol = sum(volumes[-4:]) / 4
-    prior_vol = sum(volumes[-12:-4]) / 8
+    prior_vol = sum(volumes[-16:-4]) / 12
 
     if prior_vol <= 0:
         return False, "bad volume", None
 
     vol_ratio = recent_vol / prior_vol
+
+    # 🔥 NEW: compression check
+    compressing = is_compressing(closes)
+
+    if not compressing:
+        return False, "no compression", None
 
     if move_1h < 0.3:
         return False, f"1h weak {move_1h:.1f}%", None
@@ -77,12 +103,10 @@ def has_15m_acceleration(symbol):
     if vol_ratio < 1.4:
         return False, f"volume not rising {vol_ratio:.1f}x", None
 
-    reason = f"15m acceleration: 1h {move_1h:+.1f}%, 3h {move_3h:+.1f}%, vol {vol_ratio:.1f}x"
+    reason = f"Compression + breakout: 1h {move_1h:+.1f}%, vol {vol_ratio:.1f}x"
 
     data = {
         "last_close": last_close,
-        "move_1h": move_1h,
-        "move_3h": move_3h,
         "vol_ratio": vol_ratio
     }
 
@@ -97,9 +121,9 @@ def score_candidate(t, accel_data):
     volume_score = math.log10(qvol + 1)
     trade_score = math.log10(trades + 1)
     early_score = max(0, 6 - pct)
-    acceleration_score = accel_data["vol_ratio"] * 2
+    accel_score = accel_data["vol_ratio"] * 2
 
-    return volume_score + trade_score + early_score + acceleration_score
+    return volume_score + trade_score + early_score + accel_score
 
 
 def price_plan(price):
@@ -108,11 +132,11 @@ def price_plan(price):
 
     stop = price * 0.96
 
-    target_1 = price * 1.10
-    target_2 = price * 1.20
-    target_3 = price * 1.30
+    t1 = price * 1.10
+    t2 = price * 1.20
+    t3 = price * 1.30
 
-    return entry_low, entry_high, stop, target_1, target_2, target_3
+    return entry_low, entry_high, stop, t1, t2, t3
 
 
 def fmt_price(x):
@@ -138,7 +162,7 @@ def format_watchlist(candidates):
     entry_low, entry_high, stop, t1, t2, t3 = price_plan(price)
 
     return (
-        "⚡ BEST Pre-breakout Setup (v4)\n\n"
+        "🚀 BEST Pre-breakout Setup (v5)\n\n"
         f"{symbol}\n"
         f"Current: {fmt_price(price)}\n"
         f"24h: {pct:+.1f}%\n"
@@ -146,13 +170,11 @@ def format_watchlist(candidates):
         f"Trades: {trades:,}\n\n"
         f"{reason}\n\n"
         "PLAN\n"
-        f"Entry zone: {fmt_price(entry_low)} – {fmt_price(entry_high)}\n"
-        f"Stop / invalidation: below {fmt_price(stop)}\n\n"
-        f"Target 1: {fmt_price(t1)} (+10%)\n"
-        f"Target 2: {fmt_price(t2)} (+20%)\n"
-        f"Stretch: {fmt_price(t3)} (+30%)\n\n"
-        "Suggested management: take some profit at T1, protect the rest.\n"
-        "Watchlist only. Not financial advice."
+        f"Entry: {fmt_price(entry_low)} – {fmt_price(entry_high)}\n"
+        f"Stop: below {fmt_price(stop)}\n\n"
+        f"T1: {fmt_price(t1)} (+10%)\n"
+        f"T2: {fmt_price(t2)} (+20%)\n"
+        f"T3: {fmt_price(t3)} (+30%)\n"
     )
 
 
@@ -216,7 +238,7 @@ def main():
     best = candidates[:1]
 
     if not best:
-        tg_send("⚡ Pre-breakout Watch (v4)\nNo clean 15m acceleration setups right now.")
+        tg_send("🚀 Pre-breakout Watch (v5)\nNo compression + breakout setups right now.")
         return
 
     tg_send(format_watchlist(best))
