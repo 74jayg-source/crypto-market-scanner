@@ -130,8 +130,10 @@ def main() -> None:
         trades = safe_float(t.get("count"))
         if qvol < MIN_QVOL:
             continue
+            
         if trades < MIN_TRADES:
             continue
+            
 # NEW EARLY-MOVE FILTER
 change = safe_float(t.get("priceChangePercent"))
 symbol = t.get("symbol")
@@ -142,6 +144,7 @@ if not (
     and not any(x in symbol for x in ["BTC", "ETH", "USDC", "BUSD"])
 ):
     continue
+    
         score, details = score_candidate(t)
         candidates.append((t["symbol"], score, details))
 
