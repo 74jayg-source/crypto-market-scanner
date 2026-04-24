@@ -146,9 +146,10 @@ if not (
     continue
 score, details = score_candidate(t)
 candidates.append((symbol, score, details))
+candidates.sort(key=lambda x: x[1], reverse=True)
 
     # Sort by score and take top 5
-    candidates.sort(key=lambda x: x[1], reverse=True)
+ 
     best = [(sym, details) for sym, _, details in candidates[:5]]
 
     if not best:
