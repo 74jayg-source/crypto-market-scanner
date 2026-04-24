@@ -130,6 +130,21 @@ def main() -> None:
         trades = safe_float(t.get("count"))
         if qvol < MIN_QVOL:
             continue
+                score, details = score_candidate(t)
+    candidates.append((symbol, score, details))
+
+# Sort by score and take top 5
+candidates.sort(key=lambda x: x[1], reverse=True)
+best = [(sym, details) for sym, _, details in candidates[:5]]
+
+if not best:
+    tg_send("🟡 Big-move Watch (v1)\nNo candidates passed filters this run.")
+    return
+
+msg = format_watchlist(best)
+tg_send(msg)
+
+          
             
         if trades < MIN_TRADES:
             continue
@@ -144,19 +159,6 @@ if not (
     and not any(x in symbol for x in ["BTC", "ETH", "USDC", "BUSD"])
 ):
     continue
-score, details = score_candidate(t)
-candidates.append((symbol, score, details))
-candidates.sort(key=lambda x: x[1], reverse=True)
-best = [(sym, details) for sym, _, details in candidates[:5]]
-
-    # Sort by score and take top 5
-
-    if not best:
-        tg_send("🟡 Big-move Watch (v1)\nNo candidates passed filters this run.")
-        return
-
-    msg = format_watchlist(best)
-    tg_send(msg)
 
 
 if __name__ == "__main__":
