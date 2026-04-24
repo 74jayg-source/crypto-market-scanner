@@ -42,10 +42,10 @@ def has_15m_acceleration(symbol):
     try:
         candles = fetch_15m_klines(symbol)
     except Exception:
-        return False, "15m data failed"
+        return False, "15m data failed", None
 
-    if len(candles) < 12:
-        return False, "not enough candles"
+    if len(candles) < 13:
+        return False, "not enough candles", None
 
     closes = [safe_float(c[4]) for c in candles]
     volumes = [safe_float(c[5]) for c in candles]
@@ -61,28 +61,35 @@ def has_15m_acceleration(symbol):
     prior_vol = sum(volumes[-12:-4]) / 8
 
     if prior_vol <= 0:
-        return False, "bad volume"
+        return False, "bad volume", None
 
     vol_ratio = recent_vol / prior_vol
 
-    # Pre-breakout / early acceleration rules
     if move_1h < 0.3:
-        return False, f"1h weak {move_1h:.1f}%"
+        return False, f"1h weak {move_1h:.1f}%", None
 
-    if move_1h > 4.0:
-        return False, f"1h too hot {move_1h:.1f}%"
+    if move_1h > 5.0:
+        return False, f"1h too hot {move_1h:.1f}%", None
 
-    if move_3h > 8.0:
-        return False, f"3h too extended {move_3h:.1f}%"
+    if move_3h > 10.0:
+        return False, f"3h too extended {move_3h:.1f}%", None
 
     if vol_ratio < 1.4:
-        return False, f"volume not rising {vol_ratio:.1f}x"
+        return False, f"volume not rising {vol_ratio:.1f}x", None
 
     reason = f"15m acceleration: 1h {move_1h:+.1f}%, 3h {move_3h:+.1f}%, vol {vol_ratio:.1f}x"
-    return True, reason
+
+    data = {
+        "last_close": last_close,
+        "move_1h": move_1h,
+        "move_3h": move_3h,
+        "vol_ratio": vol_ratio
+    }
+
+    return True, reason, data
 
 
-def score_candidate(t, reason):
+def score_candidate(t, accel_data):
     pct = safe_float(t.get("priceChangePercent"))
     trades = safe_float(t.get("count"))
     qvol = safe_float(t.get("quoteVolume"))
@@ -90,29 +97,63 @@ def score_candidate(t, reason):
     volume_score = math.log10(qvol + 1)
     trade_score = math.log10(trades + 1)
     early_score = max(0, 6 - pct)
+    acceleration_score = accel_data["vol_ratio"] * 2
 
-    return volume_score + trade_score + early_score
+    return volume_score + trade_score + early_score + acceleration_score
+
+
+def price_plan(price):
+    entry_low = price * 0.995
+    entry_high = price * 1.005
+
+    stop = price * 0.96
+
+    target_1 = price * 1.10
+    target_2 = price * 1.20
+    target_3 = price * 1.30
+
+    return entry_low, entry_high, stop, target_1, target_2, target_3
+
+
+def fmt_price(x):
+    if x >= 1:
+        return f"{x:.4f}"
+    elif x >= 0.01:
+        return f"{x:.5f}"
+    else:
+        return f"{x:.8f}"
 
 
 def format_watchlist(candidates):
-    lines = []
-    lines.append("⚡ Pre-breakout Watch (v3)")
-    lines.append("24h early mover + 15m acceleration\n")
+    item = candidates[0]
+    t = item["ticker"]
 
-    for i, item in enumerate(candidates, start=1):
-        t = item["ticker"]
-        symbol = t["symbol"].replace("USDT", "/USDT")
-        pct = safe_float(t.get("priceChangePercent"))
-        qvol = safe_float(t.get("quoteVolume")) / 1_000_000
-        trades = int(safe_float(t.get("count")))
-        reason = item["reason"]
+    symbol = t["symbol"].replace("USDT", "/USDT")
+    pct = safe_float(t.get("priceChangePercent"))
+    qvol = safe_float(t.get("quoteVolume")) / 1_000_000
+    trades = int(safe_float(t.get("count")))
+    reason = item["reason"]
 
-        lines.append(
-            f"{i}) {symbol} | 24h: {pct:+.1f}% | Vol: ${qvol:.1f}M | Trades: {trades:,}\n   {reason}"
-        )
+    price = safe_float(t.get("lastPrice"))
+    entry_low, entry_high, stop, t1, t2, t3 = price_plan(price)
 
-    lines.append("\nWatchlist only. Not a buy signal.")
-    return "\n".join(lines)
+    return (
+        "⚡ BEST Pre-breakout Setup (v4)\n\n"
+        f"{symbol}\n"
+        f"Current: {fmt_price(price)}\n"
+        f"24h: {pct:+.1f}%\n"
+        f"Volume: ${qvol:.1f}M\n"
+        f"Trades: {trades:,}\n\n"
+        f"{reason}\n\n"
+        "PLAN\n"
+        f"Entry zone: {fmt_price(entry_low)} – {fmt_price(entry_high)}\n"
+        f"Stop / invalidation: below {fmt_price(stop)}\n\n"
+        f"Target 1: {fmt_price(t1)} (+10%)\n"
+        f"Target 2: {fmt_price(t2)} (+20%)\n"
+        f"Stretch: {fmt_price(t3)} (+30%)\n\n"
+        "Suggested management: take some profit at T1, protect the rest.\n"
+        "Watchlist only. Not financial advice."
+    )
 
 
 def main():
@@ -140,7 +181,6 @@ def main():
         if any(x in symbol for x in ["UPUSDT", "DOWNUSDT", "BULLUSDT", "BEARUSDT"]):
             continue
 
-        # 24h early-move filter
         if pct < 1 or pct > 6:
             continue
 
@@ -152,7 +192,6 @@ def main():
 
         first_pass.append(t)
 
-    # Only check top 40 to keep GitHub run fast
     first_pass.sort(key=lambda x: safe_float(x.get("quoteVolume")), reverse=True)
     first_pass = first_pass[:40]
 
@@ -160,12 +199,12 @@ def main():
 
     for t in first_pass:
         symbol = t["symbol"]
-        ok, reason = has_15m_acceleration(symbol)
+        ok, reason, accel_data = has_15m_acceleration(symbol)
 
         if not ok:
             continue
 
-        score = score_candidate(t, reason)
+        score = score_candidate(t, accel_data)
 
         candidates.append({
             "ticker": t,
@@ -177,7 +216,7 @@ def main():
     best = candidates[:1]
 
     if not best:
-        tg_send("⚡ Pre-breakout Watch (v3)\nNo clean 15m acceleration setups right now.")
+        tg_send("⚡ Pre-breakout Watch (v4)\nNo clean 15m acceleration setups right now.")
         return
 
     tg_send(format_watchlist(best))
