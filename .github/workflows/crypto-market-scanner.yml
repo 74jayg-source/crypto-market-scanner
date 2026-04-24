@@ -1,10 +1,9 @@
-name: Crypto Market Scanner (LIVE)
+name: Crypto Market Scanner LIVE
 
 on:
   workflow_dispatch:
-
   schedule:
-    - cron: "*/15 * * * *"
+    - cron: '*/15 * * * *'
 
 
 jobs:
