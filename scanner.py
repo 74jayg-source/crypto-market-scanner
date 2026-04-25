@@ -97,6 +97,11 @@ Watchlist only. Not financial advice.
 def main():
     data = get_data()
 
+# safety check
+if not isinstance(data, list):
+    send_telegram("⚠️ Binance API error. Skipping run.")
+    return
+    
     candidates = []
 
     for t in data:
