@@ -1,7 +1,7 @@
 import requests
 import os
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 def send_telegram(msg):
@@ -12,7 +12,7 @@ def send_telegram(msg):
 
 
 def get_data():
-    url = "https://api.binance.com/api/v3/ticker/24hr"
+    url = "https://data-api.binance.vision/api/v3/ticker/24hr"
     try:
         r = requests.get(url, timeout=10)
         return r.json()
